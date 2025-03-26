@@ -175,7 +175,6 @@ If `testfile` appears, the setup is successful! 🎉
 
 ---
 
-📌 **Author**: Your Name  
-📌 **License**: MIT  
+📌 **Author**: Sai Veera Teja  
 📌 **Repository**: [Your GitHub Repo Link]
 
