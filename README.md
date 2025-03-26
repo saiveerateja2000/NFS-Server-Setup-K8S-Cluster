@@ -1,82 +1,108 @@
-# NFS-Server-Setup-K8S-Cluster
+# Kubernetes NFS Setup and Usage with Persistent Volumes
 
-## Go through the complete documentation and understand it before doing installation because u need to setup server which is master and client which is worker.
+## Step 1: Check Kubernetes Nodes
+Run the following command to check the available nodes in the cluster:
 
-This guide provides step-by-step instructions to configure an NFS (Network File System) server and use it as persistent storage in a Kubernetes cluster.
+```bash
+kubectl get nodes
+```
 
----
+Example output:
 
-## 📌 Step 1: Install NFS Server on a Node
-Choose one of your EC2 instances (e.g., master or a dedicated storage node) as the NFS Server.
+```bash
+NAME               STATUS   ROLES           AGE    VERSION
+ip-172-31-12-235   Ready    <none>          6h2m   v1.29.15
+ip-172-31-2-209    Ready    control-plane   6h3m   v1.29.15
+```
 
-### 1.1 Install NFS Server
-```sh
-sudo apt update -y
+## Step 2: Setup NFS Server on Control Plane (172.31.2.209)
+### 1. Install NFS Server
+```bash
+sudo apt update
 sudo apt install -y nfs-kernel-server
 ```
 
-### 1.2 Create an NFS Share Directory
-```sh
+### 2. Create NFS Share Directory
+```bash
 sudo mkdir -p /mnt/nfs_share
-sudo chmod 777 /mnt/nfs_share
+sudo chmod 777 /mnt/nfs_share  # Give full access for testing
+sudo chown nobody:nogroup /mnt/nfs_share  # Set ownership
 ```
 
-### 1.3 Configure NFS Exports
+### 3. Configure NFS Export
 Edit the exports file:
-```sh
+```bash
 sudo nano /etc/exports
 ```
-Add the following line (adjust the IP range to match your Kubernetes worker nodes' subnet):
-```sh
-/mnt/nfs_share *(rw,sync,no_subtree_check,no_root_squash)
+Add this line:
+```bash
+/mnt/nfs_share 172.31.12.235(rw,sync,no_subtree_check,no_root_squash)
 ```
 Save and exit.
 
-### 1.4 Apply Export Configuration
-```sh
-sudo exportfs -ra
+### 4. Apply and Restart NFS
+```bash
+sudo exportfs -rav
+sudo systemctl restart nfs-kernel-server
 ```
 
-### 1.5 Start and Enable the NFS Server
-```sh
-sudo systemctl restart nfs-server
-sudo systemctl enable nfs-server
-```
-
-### 1.6 Verify NFS is Running
-```sh
-sudo systemctl status nfs-server
-```
-Ensure the service is running before proceeding.
-
----
-
-## 📌 Step 2: Install NFS Client on Worker Nodes
-Run the following commands on each Kubernetes worker node:
-```sh
-sudo apt update -y
+## Step 3: Setup NFS Client on Worker Node (172.31.12.235)
+### 1. Install NFS Client
+```bash
+sudo apt update
 sudo apt install -y nfs-common
 ```
 
-Test the NFS connection from a worker node:
-```sh
-sudo mount -t nfs <NFS_SERVER_IP>:/mnt/nfs_share /mnt
+### 2. Create Mount Directory
+```bash
+sudo mkdir -p /mnt/nfs_client
 ```
-Check if it's mounted:
-```sh
+
+### 3. Mount NFS Share
+```bash
+sudo mount 172.31.2.209:/mnt/nfs_share /mnt/nfs_client
+```
+
+To check if it is mounted:
+```bash
 df -h | grep nfs
 ```
-If successful, unmount it:
-```sh
-sudo umount /mnt
+
+## Step 4: Verify NFS Functionality
+### 1. Create a File on Server
+```bash
+echo "Hello from NFS Server" | sudo tee /mnt/nfs_share/serverfile.txt
 ```
 
----
+### 2. Check File on Client
+```bash
+ls /mnt/nfs_client
+cat /mnt/nfs_client/serverfile.txt
+```
 
-## 📌 Step 3: Create an NFS Persistent Volume in Kubernetes
+### 3. Create a File on Client
+```bash
+echo "Hello from NFS Client" | sudo tee /mnt/nfs_client/clientfile.txt
+```
 
-### 3.1 Create Persistent Volume (PV)
-Create `nfs-pv.yaml`:
+### 4. Check File on Server
+```bash
+ls /mnt/nfs_share
+cat /mnt/nfs_share/clientfile.txt
+```
+
+## Step 5: Make Mount Persistent (Optional)
+To ensure the mount persists after a reboot, add this line to `/etc/fstab` on the client (172.31.12.235):
+```bash
+172.31.2.209:/mnt/nfs_share /mnt/nfs_client nfs defaults 0 0
+```
+Then reload:
+```bash
+sudo mount -a
+```
+
+## Step 6: Use NFS in Kubernetes with PV and PVC
+### 1. Create PersistentVolume (PV)
 ```yaml
 apiVersion: v1
 kind: PersistentVolume
@@ -87,18 +113,17 @@ spec:
     storage: 5Gi
   accessModes:
     - ReadWriteMany
-  persistentVolumeReclaimPolicy: Retain
   nfs:
     path: /mnt/nfs_share
-    server: <NFS_SERVER_IP>
+    server: 172.31.2.209
+  persistentVolumeReclaimPolicy: Retain
 ```
 Apply it:
-```sh
-kubectl apply -f nfs-pv.yaml
+```bash
+kubectl apply -f pv.yaml
 ```
 
-### 3.2 Create Persistent Volume Claim (PVC)
-Create `nfs-pvc.yaml`:
+### 2. Create PersistentVolumeClaim (PVC)
 ```yaml
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -109,71 +134,66 @@ spec:
     - ReadWriteMany
   resources:
     requests:
-      storage: 5Gi
+      storage: 2Gi
 ```
 Apply it:
-```sh
-kubectl apply -f nfs-pvc.yaml
+```bash
+kubectl apply -f pvc.yaml
 ```
 
----
-
-## 📌 Step 4: Deploy a Pod Using NFS Storage
-Create `nfs-test-pod.yaml`:
+### 3. Deploy an Application Using NFS Storage
+Example Nginx deployment using the PVC:
 ```yaml
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: nfs-test-pod
+  name: nginx-deployment
 spec:
-  containers:
-    - name: test-container
-      image: busybox
-      command: ["/bin/sh", "-c", "sleep 3600"]
-      volumeMounts:
-        - mountPath: "/mnt/nfs"
-          name: nfs-volume
-  volumes:
-    - name: nfs-volume
-      persistentVolumeClaim:
-        claimName: nfs-pvc
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx
+          volumeMounts:
+            - mountPath: /usr/share/nginx/html
+              name: nfs-storage
+      volumes:
+        - name: nfs-storage
+          persistentVolumeClaim:
+            claimName: nfs-pvc
 ```
 Apply it:
-```sh
-kubectl apply -f nfs-test-pod.yaml
+```bash
+kubectl apply -f deployment.yaml
 ```
 
-Check if the pod is running:
-```sh
+### 4. Verify Everything
+Check PV, PVC, and Pod:
+```bash
+kubectl get pv
+kubectl get pvc
 kubectl get pods
 ```
-Enter the pod and verify the mount:
-```sh
-kubectl exec -it nfs-test-pod -- df -h
-```
-Expected output:
-```
-<NFS_SERVER_IP>:/mnt/nfs_share  5.0G  0G  5.0G  /mnt/nfs
+
+Inside the running Nginx pod:
+```bash
+kubectl exec -it <nginx-pod-name> -- sh
+ls /usr/share/nginx/html
 ```
 
-Test writing a file inside the pod:
-```sh
-kubectl exec -it nfs-test-pod -- touch /mnt/nfs/testfile
-```
-Check on the NFS server:
-```sh
-ls -l /mnt/nfs_share/
-```
-If `testfile` appears, the setup is successful! 🎉
+Any files written in `/usr/share/nginx/html` will be stored persistently in NFS!
 
----
+### Summary:
+✅ Data is shared across pods
+✅ Data persists even if the pod restarts
+✅ Multiple pods can access the same data (ReadWriteMany)
 
-## 🚀 Next Steps
-✅ Successfully set up NFS storage for Kubernetes!
-🔹 If needed, you can use NFS StorageClass to provision dynamic storage.
-❌ If you face any issues, open an issue in this repository!
-
----
-
-📌 **Author**: Sai Veera Teja
+This setup ensures a clear, structured, and reliable NFS integration with Kubernetes. 🚀
 
