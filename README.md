@@ -175,6 +175,5 @@ If `testfile` appears, the setup is successful! 🎉
 
 ---
 
-📌 **Author**: Sai Veera Teja  
-📌 **Repository**: [Your GitHub Repo Link]
+📌 **Author**: Sai Veera Teja
 
