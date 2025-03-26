@@ -1,6 +1,6 @@
 # NFS-Server-Setup-K8S-Cluster
 
-# Setting Up NFS Storage for Kubernetes
+## Go through the complete documentation and understand it before doing installation because u need to setup server which is master and client which is worker.
 
 This guide provides step-by-step instructions to configure an NFS (Network File System) server and use it as persistent storage in a Kubernetes cluster.
 
